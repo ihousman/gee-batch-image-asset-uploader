@@ -5,7 +5,7 @@
 #Requires EE Python API (https://github.com/google/earthengine-api)(https://developers.google.com/earth-engine/python_install)
 #and Google Cloud SDK (https://cloud.google.com/sdk/) to be installed
 ##############################################################################################
-import os,sys,shutil,subprocess, datetime, calendar
+import os,sys,shutil,subprocess, datetime, calendar,json
 import time
 import ee
 ee.Initialize()
@@ -41,6 +41,33 @@ def glob(Dir, extension):
 def base(in_path):
     return os.path.basename(os.path.splitext(in_path)[0])
 ##############################################################################################
+
+#################################################################
+#Function to walk down folders and get all images
+def walkFolders(folder,images = []):
+    assets = ee.data.getList({'id':folder})
+    folders = [str(i['id']) for i in assets if i['type'] == 'Folder']
+    imagesT = [str(i['id']) for i in assets if i['type'] == 'Image']
+    print imagesT
+    for i in imagesT:
+        if i not in images:
+            images.append(i)
+    iteration = 2
+    while len(folders)>0:
+        print 'Starting iteration',iteration
+        for folder in folders:
+            print folder
+            assets = ee.data.getList({'id':folder})
+            folders = [str(i['id']) for i in assets if i['type'] == 'Folder']
+            imagesT = [str(i['id']) for i in assets if i['type'] == 'Image']
+            for i in imagesT:
+                if i not in images:
+                    images.append(i)
+
+        iteration+=1
+
+    return images
+#################################################################
 ##############################################################################################
 #Make sure the directory exists
 def check_dir(in_path):
@@ -145,9 +172,9 @@ def julian_to_calendar(julian_date, year):
 #Bucket must already exist
 def upload_to_gcs(image_dir,gs_bucket,image_extension = '.tif',copy_or_sync = 'copy'):
     if copy_or_sync == 'copy':
-        call_str = 'gsutil.cmd -m cp ' + image_dir + '*'+image_extension+' '+gs_bucket
+        call_str = 'gsutil.cmd -m cp "' + image_dir + '*'+image_extension+'" '+gs_bucket
     else:
-        call_str = 'gsutil.cmd -m  rsync ' +   image_dir  + ' ' + gs_bucket
+        call_str = 'gsutil.cmd -m  rsync "' +   image_dir  + '" ' + gs_bucket
     print call_str
     call = subprocess.Popen(call_str)
     call.wait()
@@ -155,7 +182,7 @@ def upload_to_gcs(image_dir,gs_bucket,image_extension = '.tif',copy_or_sync = 'c
 #Wrapper function for uploading GEE assets
 def upload_to_gee(image_dir, gs_bucket,asset_dir,image_extension = '.tif', resample_method = 'MEAN',band_names = [],property_list = []):
     #First upload to GCS
-    upload_to_gcs(image_dir,gs_bucket,image_extension,'copy')
+    #upload_to_gcs(image_dir,gs_bucket,image_extension,'copy')
 
     #Make sure collection exists
     create_image_collection(asset_dir)
@@ -194,13 +221,15 @@ def upload_to_gee(image_dir, gs_bucket,asset_dir,image_extension = '.tif', resam
 
                           "bands": band_names,
                           'properties':properties,
-                          "reductionPolicy": resample_method}
+                          "pyramidingPolicy": resample_method
+                          }
+            print request
             #Get a task id
             taskid = ee.data.newTaskId(1)[0]
-
+            print taskid
             #Submit task
-            ee.data.startIngestion(taskid, request)
-
+            message =ee.data.startIngestion(taskid, request)
+            print 'Task message:',message
         else:
             print asset_name,'already exists'
         i+=1
@@ -210,7 +239,7 @@ def upload_to_gee(image_dir, gs_bucket,asset_dir,image_extension = '.tif', resam
     while task_count >= 1:
         running,ready = countTasks(True)
         print running, 'tasks running at:',now()
-        print ready, 'tasks tready at:',now()
+        print ready, 'tasks ready at:',now()
         task_count = running+ready
         time.sleep(5)
 
